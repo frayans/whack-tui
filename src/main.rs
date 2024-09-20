@@ -13,7 +13,7 @@ fn main() -> Result<()> {
     let mut model = Model::default();
 
     while model.state != State::Exit {
-        term.draw(|frame| view(&mut model, frame))?;
+        term.draw(|frame| view(&model, frame))?;
 
         let mut current_msg = handle_event(&model)?;
 
@@ -125,7 +125,7 @@ fn update(model: &mut Model, msg: Message) -> Option<Message> {
     None
 }
 
-fn view(model: &mut Model, f: &mut Frame) {
+fn view(model: &Model, f: &mut Frame) {
     match model.state {
         State::Menu => f.render_widget(
             Paragraph::new("Press 'p' to play")
