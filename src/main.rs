@@ -8,6 +8,8 @@ use ratatui::{
     widgets::*,
 };
 
+mod whack;
+
 fn main() -> Result<()> {
     let mut term = ratatui::init();
     let mut model = Model::default();
