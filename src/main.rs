@@ -1,4 +1,4 @@
-use std::time;
+use std::time::Duration;
 
 use anyhow::Result;
 use rand::{thread_rng, Rng};
@@ -77,7 +77,7 @@ impl MoleCell {
 enum Message {
     GameWhack(MoleCell),
     GameGenerate,
-    GameGenerateCleanup(MoleCell),
+    GameGenerateCleanup,
     GameStart,
     GameLosing,
     GameWinning,
@@ -87,16 +87,21 @@ enum Message {
 fn update(model: &mut Model, msg: Message) -> Option<Message> {
     match msg {
         Message::GameWhack(cell) => {
-            model.whack_count += 1;
             if model.whack_count >= 10 && model.wrong_whack_count < 3 {
                 return Some(Message::GameWinning);
             }
 
-            if model.cells[cell.as_usize()] {
-                return Some(Message::GameGenerateCleanup(cell));
-            } else {
+            if model.wrong_whack_count >= 3 {
                 return Some(Message::GameLosing);
             }
+
+            if model.cells[cell.as_usize()] {
+                model.whack_count += 1;
+            } else {
+                model.wrong_whack_count += 1;
+            }
+
+            return Some(Message::GameGenerateCleanup);
         }
         Message::GameGenerate => {
             let mut rng = thread_rng();
@@ -104,8 +109,8 @@ fn update(model: &mut Model, msg: Message) -> Option<Message> {
             model.cells[mole_idx] = true;
             model.state = State::Game(MoleCell::from_usize(mole_idx));
         }
-        Message::GameGenerateCleanup(cell) => {
-            model.cells[cell.as_usize()] = false;
+        Message::GameGenerateCleanup => {
+            model.cells = [false; 4];
             return Some(Message::GameGenerate);
         }
         Message::GameStart => {
@@ -134,11 +139,32 @@ fn view(model: &Model, f: &mut Frame) {
             f.area(),
         ),
         State::Game(mole_idx) => {
-            let [left, right] = Layout::horizontal([Constraint::Fill(1); 2]).areas(f.area());
-            let [top_left, bot_left] = Layout::vertical([Constraint::Fill(1); 2]).areas(left);
-            let [top_right, bot_right] = Layout::vertical([Constraint::Fill(1); 2]).areas(right);
+            let game_layout = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Percentage(15),
+                    Constraint::Percentage(70),
+                    Constraint::Percentage(15),
+                ])
+                .split(f.area());
+            let [left, right] =
+                Layout::horizontal([Constraint::Percentage(50); 2]).areas(game_layout[1]);
+            let [top_left, bot_left] =
+                Layout::vertical([Constraint::Percentage(50); 2]).areas(left);
+            let [top_right, bot_right] =
+                Layout::vertical([Constraint::Percentage(50); 2]).areas(right);
 
+            let whack_text = Span::styled(
+                format!("Successful Whack: {}", model.whack_count),
+                Style::default(),
+            );
+            let wrong_whack_text = Span::styled(
+                format!("Wrong Whack: {}", model.wrong_whack_count),
+                Style::default(),
+            );
             let cell = Block::bordered();
+            f.render_widget(whack_text, game_layout[0]);
+            f.render_widget(wrong_whack_text, game_layout[2]);
             f.render_widget(&cell, top_left);
             f.render_widget(&cell, top_right);
             f.render_widget(&cell, bot_left);
@@ -160,7 +186,7 @@ fn view(model: &Model, f: &mut Frame) {
 }
 
 fn handle_event(model: &Model) -> Result<Option<Message>> {
-    if event::poll(time::Duration::from_millis(250))? {
+    if event::poll(Duration::from_millis(250))? {
         if let Event::Key(key) = event::read()? {
             if key.kind == KeyEventKind::Press {
                 return Ok(handle_key(model, key));
