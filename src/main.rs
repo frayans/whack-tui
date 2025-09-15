@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use rand::{thread_rng, Rng};
+use rand::{rng, Rng};
 use ratatui::{
     crossterm::event::{self, Event, KeyCode, KeyEventKind},
     prelude::*,
@@ -15,10 +15,10 @@ fn main() -> Result<()> {
     while model.state != State::Exit {
         term.draw(|frame| view(&model, frame))?;
 
-        let mut current_msg = handle_event(&model)?;
+        let mut current_msg = handle_event(&model);
 
-        while current_msg.is_some() {
-            current_msg = update(&mut model, current_msg.unwrap());
+        while let Some(msg) = current_msg {
+            current_msg = update(&mut model, msg);
         }
     }
 
@@ -26,12 +26,23 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Model {
     pub cells: [bool; 4],
     pub whack_count: usize,
     pub wrong_whack_count: usize,
     pub state: State,
+}
+
+impl Default for Model {
+    fn default() -> Self {
+        Self {
+            cells: [false; 4],
+            whack_count: 0,
+            wrong_whack_count: 0,
+            state: State::default(),
+        }
+    }
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -52,23 +63,25 @@ enum MoleCell {
     BotRight,
 }
 
-impl MoleCell {
-    fn as_usize(&self) -> usize {
-        match self {
+impl From<MoleCell> for usize {
+    fn from(value: MoleCell) -> Self {
+        match value {
             MoleCell::TopLeft => 0,
             MoleCell::TopRight => 1,
             MoleCell::BotLeft => 2,
             MoleCell::BotRight => 3,
         }
     }
+}
 
-    fn from_usize(n: usize) -> Option<Self> {
-        match n {
-            0 => Some(MoleCell::TopLeft),
-            1 => Some(MoleCell::TopRight),
-            2 => Some(MoleCell::BotLeft),
-            3 => Some(MoleCell::BotRight),
-            _ => None,
+impl From<usize> for MoleCell {
+    fn from(value: usize) -> Self {
+        match value {
+            0 => MoleCell::TopLeft,
+            1 => MoleCell::TopRight,
+            2 => MoleCell::BotLeft,
+            3 => MoleCell::BotRight,
+            _ => unreachable!(),
         }
     }
 }
@@ -95,39 +108,40 @@ fn update(model: &mut Model, msg: Message) -> Option<Message> {
                 return Some(Message::GameLosing);
             }
 
-            if model.cells[cell.as_usize()] {
+            let idx: usize = cell.into();
+            if model.cells[idx] {
                 model.whack_count += 1;
             } else {
                 model.wrong_whack_count += 1;
             }
 
-            return Some(Message::GameGenerateCleanup);
+            Some(Message::GameGenerateCleanup)
         }
         Message::GameGenerate => {
-            let mut rng = thread_rng();
-            let mole_idx = rng.gen_range(0..4);
+            let mut rng = rng();
+            let mole_idx = rng.random_range(0..4);
             model.cells[mole_idx] = true;
-            model.state = State::Game(MoleCell::from_usize(mole_idx));
+            model.state = State::Game(Some(mole_idx.into()));
+            None
         }
         Message::GameGenerateCleanup => {
             model.cells = [false; 4];
-            return Some(Message::GameGenerate);
+            Some(Message::GameGenerate)
         }
-        Message::GameStart => {
-            return Some(Message::GameGenerate);
-        }
+        Message::GameStart => Some(Message::GameGenerate),
         Message::GameLosing => {
             model.state = State::GameLose;
+            None
         }
         Message::GameWinning => {
             model.state = State::GameWin;
+            None
         }
         Message::Quit => {
             model.state = State::Exit;
+            None
         }
     }
-
-    None
 }
 
 fn view(model: &Model, f: &mut Frame) {
@@ -179,37 +193,57 @@ fn view(model: &Model, f: &mut Frame) {
                 }
             }
         }
-        State::GameLose => todo!(),
-        State::GameWin => todo!(),
-        State::Exit => todo!(),
+        State::GameLose => f.render_widget(
+            Paragraph::new(vec![
+                Line::from("You lost!"),
+                Line::from("Press 'q' to quit."),
+            ])
+            .block(Block::bordered())
+            .centered(),
+            f.area(),
+        ),
+        State::GameWin => f.render_widget(
+            Paragraph::new(vec![
+                Line::from("You won!"),
+                Line::from("Press 'q' to quit."),
+            ])
+            .block(Block::bordered())
+            .centered(),
+            f.area(),
+        ),
+        State::Exit => {}
     }
 }
 
-fn handle_event(model: &Model) -> Result<Option<Message>> {
-    if event::poll(Duration::from_millis(250))? {
-        if let Event::Key(key) = event::read()? {
+fn handle_event(model: &Model) -> Option<Message> {
+    if let Ok(_) = event::poll(Duration::from_millis(250)) {
+        if let Ok(Event::Key(key)) = event::read() {
             if key.kind == KeyEventKind::Press {
-                return Ok(handle_key(model, key));
+                return handle_key(model, key);
             }
         }
     }
 
-    Ok(None)
+    None
 }
 
-fn handle_key(model: &Model, key: event::KeyEvent) -> Option<Message> {
+fn handle_key(model: &Model, key_ev: event::KeyEvent) -> Option<Message> {
     match model.state {
-        State::Menu => match key.code {
+        State::Menu => match key_ev.code {
             KeyCode::Char('q') => Some(Message::Quit),
             KeyCode::Char('p') => Some(Message::GameStart),
             _ => None,
         },
-        State::Game(_) => match key.code {
+        State::Game(_) => match key_ev.code {
             KeyCode::Esc => Some(Message::Quit),
             KeyCode::Char('q') => Some(Message::GameWhack(MoleCell::TopLeft)),
             KeyCode::Char('w') => Some(Message::GameWhack(MoleCell::TopRight)),
             KeyCode::Char('a') => Some(Message::GameWhack(MoleCell::BotLeft)),
             KeyCode::Char('s') => Some(Message::GameWhack(MoleCell::BotRight)),
+            _ => None,
+        },
+        State::GameWin | State::GameLose => match key_ev.code {
+            KeyCode::Char('q') => Some(Message::Quit),
             _ => None,
         },
         _ => None,
